@@ -10,8 +10,7 @@
     <div class="container">
         <h1>One-Time Pad Verschlüsselung</h1>
         <div class="demo-container">
-            <canvas id="imageCanvas"></canvas>
-            <canvas id="maskCanvas"></canvas>
+            <canvas id="displayCanvas"></canvas>
         </div>
         <div class="controls">
             <p id="hint" class="hint">Tipp: Bewege die Maske, um das verschlüsselte Bild zu entschlüsseln</p>
@@ -21,10 +20,11 @@
             <h2>Wie funktioniert's?</h2>
             <p>Das One-Time Pad ist eine perfekte Verschlüsselungsmethode. Hier siehst du:</p>
             <ul>
-                <li>Ein verschlüsseltes Bild (links)</li>
-                <li>Eine Maske (rechts), die du über das Bild bewegen kannst</li>
+                <li>Ein verschlüsseltes Bild (versteckt)</li>
+                <li>Eine Maske (die du bewegen kannst)</li>
                 <li>Wenn die Maske richtig positioniert ist, wird das Originalbild sichtbar</li>
             </ul>
+            <p>Bewege die sichtbare Maske. Wo sie das (unsichtbare) verschlüsselte Bild überlappt, siehst du das Ergebnis der Entschlüsselung (XOR-Operation). Außerhalb siehst du nur die Maske.</p>
         </div>
     </div>
     <script src="script.js"></script>
