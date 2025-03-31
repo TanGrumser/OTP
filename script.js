@@ -1,9 +1,9 @@
 // Constants
 const SEED = 12345; // Changed seed for potentially better results
-const PIXEL_SIZE = 8; // Size of each pixel in the grid
-const IMAGE_SIZE = 32; // Size of the image in pixels (adjust if cat.png is different)
-const MASK_SIZE = 48; // Size of the mask in pixels (larger than image)
-const SOLUTION_OFFSET = { x: 8, y: 8 }; // Correct position offset for the mask (in grid units)
+const PIXEL_SIZE = 6; // Size of each pixel in the grid
+const IMAGE_SIZE = 64; // Size of the image in pixels (adjust if cat.png is different)
+const MASK_SIZE = 96; // Size of the mask in pixels (larger than image)
+const SOLUTION_OFFSET = { x: 16, y: 16 }; // Correct position offset for the mask (in grid units)
 
 // LCG Pseudo-Random Number Generator state
 let lcg_seed = SEED;
@@ -193,7 +193,7 @@ let maskGrid = null;
 let imageCanvas = null;
 let maskCanvas = null;
 let hintElement = null;
-let currentMaskOffsetPixels = { x: 0, y: 0 }; // Keep track of mask offset
+let currentMaskOffsetPixels = { x: 0, y: 0 }; // Keep track of mask offset in pixels
 
 // --- Initialization ---
 async function init() {
@@ -232,9 +232,10 @@ async function init() {
         console.log('Encrypted grid created.');
 
         // 4. Draw initial state
-        console.log('Drawing initial encrypted grid...');
-        drawGrid(imageCanvas, encryptedGrid, PIXEL_SIZE);
-        console.log('Initial grid drawn.');
+        console.log('Drawing initial grids...');
+        drawGrid(imageCanvas, encryptedGrid, PIXEL_SIZE); // Draw encrypted image on bottom
+        drawGrid(maskCanvas, maskGrid, PIXEL_SIZE);      // Draw mask on top
+        console.log('Initial grids drawn.');
 
         setupEventListeners();
         hintElement.textContent = "Tipp: Bewege die Maske, um das verschlüsselte Bild zu entschlüsseln";
@@ -252,83 +253,75 @@ async function init() {
     }
 }
 
-// --- Dynamic Decryption View (Draws result on imageCanvas) ---
-function updateDecryptionView(currentOffsetGrid) {
-    if (!encryptedGrid || !maskGrid || !imageCanvas) return;
-
-    const decryptedViewGrid = [];
-    for (let y = 0; y < IMAGE_SIZE; y++) {
-        decryptedViewGrid[y] = [];
-        for (let x = 0; x < IMAGE_SIZE; x++) {
-            const maskX = x + currentOffsetGrid.x;
-            const maskY = y + currentOffsetGrid.y;
-            if (maskX >= 0 && maskX < MASK_SIZE && maskY >= 0 && maskY < MASK_SIZE) {
-                decryptedViewGrid[y][x] = combineColors(encryptedGrid[y][x], maskGrid[maskY][maskX]);
-            } else {
-                decryptedViewGrid[y][x] = encryptedGrid[y][x]; // Show encrypted if mask doesn't cover
-            }
-        }
-    }
-    // *** Redraw the imageCanvas (bottom) with the dynamically decrypted view ***
-    drawGrid(imageCanvas, decryptedViewGrid, PIXEL_SIZE);
-}
+// --- Dynamic Decryption View Removed --- Functionality handled by CSS blend mode
+// function updateDecryptionView(currentOffsetGrid) { ... }
 
 // --- Event Listeners ---
 function setupEventListeners() {
     let isDragging = false;
-    let startX, startY; // Mouse position when drag started (relative to page)
+    let lastX, lastY; // Store the last mouse position
 
     maskCanvas.addEventListener('mousedown', (e) => {
         isDragging = true;
-        // Record the starting mouse position relative to the *page*,
-        // and subtract the *current* offset of the mask element.
-        // This allows calculating the new offset correctly in mousemove.
-        startX = e.clientX - currentMaskOffsetPixels.x;
-        startY = e.clientY - currentMaskOffsetPixels.y;
+        lastX = e.clientX;
+        lastY = e.clientY;
+        maskCanvas.style.cursor = 'grabbing'; // Change cursor during drag
         e.preventDefault();
     });
 
     document.addEventListener('mousemove', (e) => {
         if (!isDragging) return;
 
-        // Calculate the desired new raw pixel offset based on mouse movement
-        let newRawX = e.clientX - startX;
-        let newRawY = e.clientY - startY;
+        // Calculate change in mouse position (dx, dy)
+        const dx = e.clientX - lastX;
+        const dy = e.clientY - lastY;
 
-        // Snap the raw pixel offset to the PIXEL_SIZE grid
-        currentMaskOffsetPixels.x = Math.round(newRawX / PIXEL_SIZE) * PIXEL_SIZE;
-        currentMaskOffsetPixels.y = Math.round(newRawY / PIXEL_SIZE) * PIXEL_SIZE;
+        // Update last position for next event
+        lastX = e.clientX;
+        lastY = e.clientY;
 
-        // Update mask *element* position visually (even though it's transparent)
-        maskCanvas.style.transform = `translate(calc(-50% + ${currentMaskOffsetPixels.x}px), calc(-50% + ${currentMaskOffsetPixels.y}px))`;
+        // Update the current pixel offset
+        currentMaskOffsetPixels.x += dx;
+        currentMaskOffsetPixels.y += dy;
 
-        // Calculate the grid offset for decryption and hints
+        // Snap the final pixel offset to the grid
+        // Note: It might feel slightly better to snap the *change* (dx, dy) before adding,
+        // but snapping the total offset is simpler here.
+        let snappedX = Math.round(currentMaskOffsetPixels.x / PIXEL_SIZE) * PIXEL_SIZE;
+        let snappedY = Math.round(currentMaskOffsetPixels.y / PIXEL_SIZE) * PIXEL_SIZE;
+
+        // Apply the transform to move the mask canvas
+        maskCanvas.style.transform = `translate(calc(-50% + ${snappedX}px), calc(-50% + ${snappedY}px))`;
+
+        // Calculate the grid offset for hints
         const currentOffsetGrid = {
-            x: Math.round(currentMaskOffsetPixels.x / PIXEL_SIZE),
-            y: Math.round(currentMaskOffsetPixels.y / PIXEL_SIZE)
+            x: Math.round(snappedX / PIXEL_SIZE),
+            y: Math.round(snappedY / PIXEL_SIZE)
         };
 
-        // Update the underlying image canvas to show the dynamically decrypted view
-        updateDecryptionView(currentOffsetGrid);
-
-        // Update hint
+        // Update hint - NO drawing needed here, CSS handles blending
         hintElement.textContent = generateHint(currentOffsetGrid);
     });
 
     document.addEventListener('mouseup', () => {
         if (isDragging) {
             isDragging = false;
-            // Optional: When drag stops, you could leave the last decrypted view,
-            // or snap back to showing the fully encrypted image:
-            // if(encryptedGrid) drawGrid(imageCanvas, encryptedGrid, PIXEL_SIZE);
+            maskCanvas.style.cursor = 'move';
+            // Snap final position after drag ends
+            currentMaskOffsetPixels.x = Math.round(currentMaskOffsetPixels.x / PIXEL_SIZE) * PIXEL_SIZE;
+            currentMaskOffsetPixels.y = Math.round(currentMaskOffsetPixels.y / PIXEL_SIZE) * PIXEL_SIZE;
+            maskCanvas.style.transform = `translate(calc(-50% + ${currentMaskOffsetPixels.x}px), calc(-50% + ${currentMaskOffsetPixels.y}px))`;
         }
     });
 
     document.addEventListener('mouseleave', () => {
         if (isDragging) {
             isDragging = false;
-            // Optional: Snap back when mouse leaves window
-            // if(encryptedGrid) drawGrid(imageCanvas, encryptedGrid, PIXEL_SIZE);
+            maskCanvas.style.cursor = 'move';
+             // Snap final position if mouse leaves window during drag
+            currentMaskOffsetPixels.x = Math.round(currentMaskOffsetPixels.x / PIXEL_SIZE) * PIXEL_SIZE;
+            currentMaskOffsetPixels.y = Math.round(currentMaskOffsetPixels.y / PIXEL_SIZE) * PIXEL_SIZE;
+            maskCanvas.style.transform = `translate(calc(-50% + ${currentMaskOffsetPixels.x}px), calc(-50% + ${currentMaskOffsetPixels.y}px))`;
         }
     });
     
@@ -336,9 +329,7 @@ function setupEventListeners() {
     resetButton.addEventListener('click', () => {
         currentMaskOffsetPixels = { x: 0, y: 0 };
         maskCanvas.style.transform = 'translate(-50%, -50%)';
-        if(encryptedGrid) {
-             drawGrid(imageCanvas, encryptedGrid, PIXEL_SIZE); // Restore encrypted view
-        }
+        // No need to redraw imageCanvas, it's static (encrypted)
         hintElement.textContent = "Tipp: Bewege die Maske, um das verschlüsselte Bild zu entschlüsseln";
     });
 }
