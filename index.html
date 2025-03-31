@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>One-Time Pad Demo</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>One-Time Pad Verschlüsselung</h1>
+        <div class="demo-container">
+            <canvas id="imageCanvas"></canvas>
+            <canvas id="maskCanvas"></canvas>
+        </div>
+        <div class="controls">
+            <p id="hint" class="hint">Tipp: Bewege die Maske, um das verschlüsselte Bild zu entschlüsseln</p>
+            <button id="resetButton">Zurücksetzen</button>
+        </div>
+        <div class="explanation">
+            <h2>Wie funktioniert's?</h2>
+            <p>Das One-Time Pad ist eine perfekte Verschlüsselungsmethode. Hier siehst du:</p>
+            <ul>
+                <li>Ein verschlüsseltes Bild (links)</li>
+                <li>Eine Maske (rechts), die du über das Bild bewegen kannst</li>
+                <li>Wenn die Maske richtig positioniert ist, wird das Originalbild sichtbar</li>
+            </ul>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html> 
