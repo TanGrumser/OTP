@@ -5,6 +5,15 @@ const IMAGE_SIZE = 64; // Size of the image in pixels (adjust if cat.png is diff
 const MASK_SIZE = 96; // Size of the mask in pixels (larger than image)
 const SOLUTION_OFFSET = { x: 16, y: 16 }; // Correct position offset for the mask (in grid units)
 
+// Layout constants
+const PADDING = 10; // Canvas padding
+const SPACING = 20; // Space between initial image and mask
+const ENCRYPTED_IMG_POS = { x: PADDING, y: PADDING }; // Top-left pixel pos of encrypted image
+const INITIAL_MASK_POS = { // Top-left pixel pos of mask initially
+    x: ENCRYPTED_IMG_POS.x + IMAGE_SIZE * PIXEL_SIZE + SPACING,
+    y: PADDING
+};
+
 // LCG PRNG state
 let lcg_seed = SEED;
 
@@ -163,7 +172,7 @@ let encryptedGrid = null; // Stored but not directly displayed initially
 let maskGrid = null;
 let displayCanvas = null; // The single canvas for display
 let hintElement = null;
-let currentMaskOffsetGrid = { x: 0, y: 0 }; // Keep track of mask offset in GRID units
+let currentMaskPosPixels = { ...INITIAL_MASK_POS }; // Mask's top-left corner in pixels
 
 // --- Initialization ---
 async function init() {
@@ -186,18 +195,21 @@ async function init() {
         maskGrid = createMaskGrid(MASK_SIZE);
         console.log('Mask grid created.');
 
-        console.log('Creating encrypted grid...');
-        // Encrypted grid is calculated but stored in memory, not drawn initially
+        console.log('Creating encrypted grid (in memory)...');
         encryptedGrid = createEncryptedGrid(originalImageGrid, maskGrid, SOLUTION_OFFSET);
-        console.log('Encrypted grid created (in memory).');
+        console.log('Encrypted grid created.');
 
-        console.log('Drawing initial mask view...');
-        // Initially, the display canvas shows only the mask
-        drawGrid(displayCanvas, maskGrid, PIXEL_SIZE);
-        console.log('Initial mask view drawn.');
+        // Set initial canvas size
+        displayCanvas.width = INITIAL_MASK_POS.x + MASK_SIZE * PIXEL_SIZE + PADDING;
+        displayCanvas.height = PADDING + Math.max(IMAGE_SIZE, MASK_SIZE) * PIXEL_SIZE + PADDING;
+
+        console.log('Drawing initial state...');
+        currentMaskPosPixels = { ...INITIAL_MASK_POS }; // Reset position
+        redrawDisplayCanvas(currentMaskPosPixels);
+        console.log('Initial state drawn.');
 
         setupEventListeners();
-        hintElement.textContent = "Tipp: Bewege die Maske, um das verschlüsselte Bild zu entschlüsseln";
+        hintElement.textContent = generateHint(currentMaskPosPixels); // Initial hint
 
     } catch (error) {
         console.error('Error during initialization:', error);
@@ -211,55 +223,118 @@ async function init() {
     }
 }
 
-// --- Function to update the single display canvas ---
-function updateDisplayCanvas(offsetGrid) {
+// --- Drawing Logic ---
+function redrawDisplayCanvas(maskTopLeftPixels) {
     if (!displayCanvas || !maskGrid || !encryptedGrid) return;
-
-    const newViewGrid = []; // Create the grid representing the current view
     const ctx = displayCanvas.getContext('2d');
 
-    // Ensure canvas dimensions match the mask size
-    displayCanvas.width = MASK_SIZE * PIXEL_SIZE;
-    displayCanvas.height = MASK_SIZE * PIXEL_SIZE;
+    // 1. Clear Canvas
     ctx.clearRect(0, 0, displayCanvas.width, displayCanvas.height);
 
-    for (let y = 0; y < MASK_SIZE; y++) {
-        newViewGrid[y] = [];
-        for (let x = 0; x < MASK_SIZE; x++) {
-            // Calculate potential coordinates in the encrypted image grid
-            const encX = x - offsetGrid.x;
-            const encY = y - offsetGrid.y;
-
-            // Check if these coordinates fall within the encrypted image bounds
-            if (encX >= 0 && encX < IMAGE_SIZE && encY >= 0 && encY < IMAGE_SIZE) {
-                // Overlap: Calculate decrypted color using XOR
-                const encryptedColor = encryptedGrid[encY][encX];
-                const maskColor = maskGrid[y][x];
-                newViewGrid[y][x] = combineColors(encryptedColor, maskColor);
-            } else {
-                // No overlap: Just show the mask pixel
-                newViewGrid[y][x] = maskGrid[y][x];
-            }
-            // Draw the calculated pixel immediately (alternative to drawing the whole grid at the end)
-            ctx.fillStyle = newViewGrid[y][x];
-            ctx.fillRect(x * PIXEL_SIZE, y * PIXEL_SIZE, PIXEL_SIZE, PIXEL_SIZE);
+    // 2. Draw Encrypted Image Base
+    for (let ey = 0; ey < IMAGE_SIZE; ey++) {
+        for (let ex = 0; ex < IMAGE_SIZE; ex++) {
+            ctx.fillStyle = encryptedGrid[ey][ex];
+            ctx.fillRect(
+                ENCRYPTED_IMG_POS.x + ex * PIXEL_SIZE,
+                ENCRYPTED_IMG_POS.y + ey * PIXEL_SIZE,
+                PIXEL_SIZE, PIXEL_SIZE
+            );
         }
     }
-    // If drawing pixel by pixel above, this call is redundant:
-    // drawGrid(displayCanvas, newViewGrid, PIXEL_SIZE);
+
+    // 3. Draw Mask (potentially XORing where it overlaps)
+    for (let my = 0; my < MASK_SIZE; my++) { // Mask grid Y
+        for (let mx = 0; mx < MASK_SIZE; mx++) { // Mask grid X
+            // Absolute pixel coords of the top-left of this mask pixel on the canvas
+            const maskPixelX = maskTopLeftPixels.x + mx * PIXEL_SIZE;
+            const maskPixelY = maskTopLeftPixels.y + my * PIXEL_SIZE;
+
+            // Coords relative to encrypted image's top-left origin
+            const relEncX = maskPixelX - ENCRYPTED_IMG_POS.x;
+            const relEncY = maskPixelY - ENCRYPTED_IMG_POS.y;
+
+            // Grid coords within encrypted image (if they fall inside)
+            const encGridX = Math.floor(relEncX / PIXEL_SIZE);
+            const encGridY = Math.floor(relEncY / PIXEL_SIZE);
+
+            let displayColor;
+            // Check if this mask pixel overlaps the encrypted image area
+            if (encGridX >= 0 && encGridX < IMAGE_SIZE && encGridY >= 0 && encGridY < IMAGE_SIZE) {
+                // Overlap: Calculate XORed color
+                const encryptedColor = encryptedGrid[encGridY][encGridX];
+                const maskColor = maskGrid[my][mx];
+                displayColor = combineColors(encryptedColor, maskColor);
+            } else {
+                // No Overlap: Use the plain mask color
+                displayColor = maskGrid[my][mx];
+            }
+
+            // Draw the resulting pixel for this part of the mask
+            ctx.fillStyle = displayColor;
+            ctx.fillRect(maskPixelX, maskPixelY, PIXEL_SIZE, PIXEL_SIZE);
+        }
+    }
+}
+
+// --- Hint Generation ---
+function generateHint(currentMaskPosPixels) {
+    // Target position for the mask's top-left corner for perfect decryption
+    const SOLUTION_POS_PIXELS = {
+        x: ENCRYPTED_IMG_POS.x - SOLUTION_OFFSET.x * PIXEL_SIZE,
+        y: ENCRYPTED_IMG_POS.y - SOLUTION_OFFSET.y * PIXEL_SIZE
+    };
+
+    const diffX_pixels = SOLUTION_POS_PIXELS.x - currentMaskPosPixels.x;
+    const diffY_pixels = SOLUTION_POS_PIXELS.y - currentMaskPosPixels.y;
+
+    const distance_pixels = Math.sqrt(diffX_pixels**2 + diffY_pixels**2);
+
+    // Check if solved (within ~half a pixel size distance)
+    if (distance_pixels < PIXEL_SIZE * 0.7) { // Adjusted threshold slightly
+        return "Perfekt! 👍";
+    }
+
+    // Determine arrow direction
+    let arrow = "";
+    const threshold = PIXEL_SIZE * 0.5; // Threshold distance to trigger arrow component
+    let needsRight = diffX_pixels > threshold;
+    let needsLeft = diffX_pixels < -threshold;
+    let needsDown = diffY_pixels > threshold;
+    let needsUp = diffY_pixels < -threshold;
+
+    if (needsUp && needsLeft) arrow = "↖";
+    else if (needsUp && needsRight) arrow = "↗";
+    else if (needsDown && needsLeft) arrow = "↙";
+    else if (needsDown && needsRight) arrow = "↘";
+    else if (needsUp) arrow = "↑";
+    else if (needsDown) arrow = "↓";
+    else if (needsLeft) arrow = "←";
+    else if (needsRight) arrow = "→";
+    else arrow = "?"; // Should indicate very close if not solved
+
+    // Proximity text
+    let proximity = "";
+    const distance_grid = distance_pixels / PIXEL_SIZE;
+    if (distance_grid < 5) proximity = " (Sehr nah!)";
+    else if (distance_grid < 15) proximity = " (Nah)";
+    else if (distance_grid < 30) proximity = ""; // Further away, just arrow
+    else proximity = " (Weit weg)";
+
+    return `Tipp: ${arrow}${proximity}`;
 }
 
 // --- Event Listeners ---
 function setupEventListeners() {
     let isDragging = false;
-    let lastPixelX, lastPixelY; // Store the last pixel coordinates of the mouse
+    let dragStartX, dragStartY; // Mouse position when drag started (client coords)
+    let maskStartPosPixels; // Mask position when drag started
 
     displayCanvas.addEventListener('mousedown', (e) => {
         isDragging = true;
-        // Get mouse position relative to the canvas
-        const rect = displayCanvas.getBoundingClientRect();
-        lastPixelX = e.clientX - rect.left;
-        lastPixelY = e.clientY - rect.top;
+        dragStartX = e.clientX;
+        dragStartY = e.clientY;
+        maskStartPosPixels = { ...currentMaskPosPixels }; // Store position at drag start
         displayCanvas.style.cursor = 'grabbing';
         e.preventDefault();
     });
@@ -267,43 +342,29 @@ function setupEventListeners() {
     document.addEventListener('mousemove', (e) => {
         if (!isDragging) return;
 
-        const rect = displayCanvas.getBoundingClientRect();
-        const currentPixelX = e.clientX - rect.left;
-        const currentPixelY = e.clientY - rect.top;
+        const mouseDx = e.clientX - dragStartX;
+        const mouseDy = e.clientY - dragStartY;
 
-        // Calculate change in pixels
-        const dx = currentPixelX - lastPixelX;
-        const dy = currentPixelY - lastPixelY;
+        // Calculate new target mask position
+        let targetMaskX = maskStartPosPixels.x + mouseDx;
+        let targetMaskY = maskStartPosPixels.y + mouseDy;
 
-        // Update last position
-        lastPixelX = currentPixelX;
-        lastPixelY = currentPixelY;
+        // Snap the target position to the grid
+        currentMaskPosPixels.x = Math.round(targetMaskX / PIXEL_SIZE) * PIXEL_SIZE;
+        currentMaskPosPixels.y = Math.round(targetMaskY / PIXEL_SIZE) * PIXEL_SIZE;
 
-        // Update the grid offset based on pixel change
-        // Note: We don't move the canvas element itself anymore
-        currentMaskOffsetGrid.x += dx / PIXEL_SIZE;
-        currentMaskOffsetGrid.y += dy / PIXEL_SIZE;
+        // Redraw the canvas with the new mask position
+        redrawDisplayCanvas(currentMaskPosPixels);
 
-        // Snap the grid offset
-        let snappedGridX = Math.round(currentMaskOffsetGrid.x);
-        let snappedGridY = Math.round(currentMaskOffsetGrid.y);
-
-        // Update the display canvas based on the snapped grid offset
-        updateDisplayCanvas({ x: snappedGridX, y: snappedGridY });
-
-        // Update hint based on the snapped grid offset
-        hintElement.textContent = generateHint({ x: snappedGridX, y: snappedGridY });
+        // Update hint
+        hintElement.textContent = generateHint(currentMaskPosPixels);
     });
 
     document.addEventListener('mouseup', () => {
         if (isDragging) {
             isDragging = false;
             displayCanvas.style.cursor = 'move';
-            // Final snap of the logical offset
-            currentMaskOffsetGrid.x = Math.round(currentMaskOffsetGrid.x);
-            currentMaskOffsetGrid.y = Math.round(currentMaskOffsetGrid.y);
-            // Redraw with final snapped position (optional, mousemove already did)
-             updateDisplayCanvas(currentMaskOffsetGrid);
+            // Final position is already snapped and drawn in mousemove
         }
     });
 
@@ -311,17 +372,15 @@ function setupEventListeners() {
         if (isDragging) {
             isDragging = false;
             displayCanvas.style.cursor = 'move';
-            // Optional: reset or leave as is when mouse leaves?
-            // Let's leave it as is for now.
+            // Leave mask where it was when mouse left
         }
     });
 
     const resetButton = document.getElementById('resetButton');
     resetButton.addEventListener('click', () => {
-        currentMaskOffsetGrid = { x: 0, y: 0 };
-        // Redraw the initial state (just the mask)
-        drawGrid(displayCanvas, maskGrid, PIXEL_SIZE);
-        hintElement.textContent = "Tipp: Bewege die Maske, um das verschlüsselte Bild zu entschlüsseln";
+        currentMaskPosPixels = { ...INITIAL_MASK_POS }; // Reset position
+        redrawDisplayCanvas(currentMaskPosPixels);    // Redraw initial state
+        hintElement.textContent = generateHint(currentMaskPosPixels); // Reset hint
     });
 }
 
