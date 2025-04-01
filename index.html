@@ -14,7 +14,14 @@
         </div>
         <div class="controls">
             <p id="hint" class="hint">Tipp: Bewege die Maske, um das verschlüsselte Bild zu entschlüsseln</p>
-            <button id="resetButton">Zurücksetzen</button>
+            <div>
+                <label for="maskType">Maskentyp: </label>
+                <select id="maskType">
+                    <option value="coherent" selected>Kohärent (Perlin)</option>
+                    <option value="random">Zufällig</option>
+                </select>
+                <button id="resetButton" style="margin-left: 10px;">Zurücksetzen</button>
+            </div>
         </div>
         <div class="explanation">
             <h2>Wie funktioniert's?</h2>

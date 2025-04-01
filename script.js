@@ -3,7 +3,7 @@ const SEED = 12345; // Changed seed for potentially better results
 const PIXEL_SIZE = 6; // Size of each pixel in the grid
 const IMAGE_SIZE = 64; // Size of the image in pixels (adjust if cat.png is different)
 const MASK_SIZE = 96; // Size of the mask in pixels (larger than image)
-const SOLUTION_OFFSET = { x: 16, y: 16 }; // Correct position offset for the mask (in grid units)
+const SOLUTION_OFFSET = { x: 20, y: 26 }; // Correct position offset for the mask (in grid units)
 
 // Layout constants
 const PADDING = 10; // Canvas padding
@@ -13,6 +13,10 @@ const INITIAL_MASK_POS = { // Top-left pixel pos of mask initially
     x: ENCRYPTED_IMG_POS.x + IMAGE_SIZE * PIXEL_SIZE + SPACING,
     y: PADDING
 };
+
+// Perlin Noise constants
+const PERLIN_SCALE = 0.08; // Adjust for different noise granularity
+const PERLIN_SEED_OFFSET = 1000; // Offset seed for Perlin noise
 
 // LCG PRNG state
 let lcg_seed = SEED;
@@ -27,8 +31,8 @@ function seededRandom() {
 }
 
 // Reset seed function
-function resetSeed() {
-    lcg_seed = SEED;
+function resetSeed(offset = 0) {
+    lcg_seed = SEED + offset;
 }
 
 // Generate random color
@@ -39,8 +43,45 @@ function getRandomColor() {
     return `rgb(${r},${g},${b})`;
 }
 
+// --- Perlin Noise Implementation (Simple 2D) ---
+// Based on example by Ken Perlin, adapted for seeding
+const perlin_p = []; // Permutation table
+function initPerlinNoise(seedOffset) {
+    resetSeed(seedOffset); // Use our PRNG to seed the permutation table
+    const p_source = Array.from({length: 256}, (_, i) => i);
+    for (let i = p_source.length - 1; i > 0; i--) {
+        const j = Math.floor(seededRandom() * (i + 1));
+        [p_source[i], p_source[j]] = [p_source[j], p_source[i]]; // Shuffle
+    }
+    // Duplicate the array to avoid overflow checks
+    for (let i = 0; i < 256; i++) perlin_p[i] = perlin_p[i + 256] = p_source[i];
+}
+function fade(t) { return t * t * t * (t * (t * 6 - 15) + 10); }
+function lerp(t, a, b) { return a + t * (b - a); }
+function grad(hash, x, y) {
+    const h = hash & 7; // Use bottom 3 bits (0-7)
+    const u = h < 4 ? x : y;
+    const v = h < 4 ? y : x;
+    return ((h & 1) === 0 ? u : -u) + ((h & 2) === 0 ? v : -v);
+}
+function perlin2D(x, y) {
+    const X = Math.floor(x) & 255;
+    const Y = Math.floor(y) & 255;
+    x -= Math.floor(x);
+    y -= Math.floor(y);
+    const u = fade(x);
+    const v = fade(y);
+    const p = perlin_p;
+    const A = p[X] + Y, AA = p[A], AB = p[A + 1];
+    const B = p[X + 1] + Y, BA = p[B], BB = p[B + 1];
+
+    const res = lerp(v, lerp(u, grad(p[AA], x, y), grad(p[BA], x - 1, y)),
+                      lerp(u, grad(p[AB], x, y - 1), grad(p[BB], x - 1, y - 1)));
+    return (res + 1.0) / 2.0; // Map result to 0.0 - 1.0
+}
+
 // Create pixel grid for mask
-function createMaskGrid(size) {
+function createRandomMaskGrid(size) {
     resetSeed();
     const grid = [];
     for (let y = 0; y < size; y++) {
@@ -50,6 +91,35 @@ function createMaskGrid(size) {
         }
     }
     return grid;
+}
+
+function createCoherentMaskGrid(size) {
+    initPerlinNoise(PERLIN_SEED_OFFSET); // Initialize Perlin noise with offset seed
+    const grid = [];
+    for (let y = 0; y < size; y++) {
+        grid[y] = [];
+        for (let x = 0; x < size; x++) {
+            // Get noise value (0-1) for each color channel separately for more variation
+            const noiseR = perlin2D(x * PERLIN_SCALE, y * PERLIN_SCALE);
+            const noiseG = perlin2D((x + 100) * PERLIN_SCALE, y * PERLIN_SCALE); // Offset inputs slightly
+            const noiseB = perlin2D(x * PERLIN_SCALE, (y + 200) * PERLIN_SCALE);
+            
+            const r = Math.floor(noiseR * 256);
+            const g = Math.floor(noiseG * 256);
+            const b = Math.floor(noiseB * 256);
+            grid[y][x] = `rgb(${r},${g},${b})`;
+        }
+    }
+    return grid;
+}
+
+// Wrapper function to select mask type
+function createMaskGrid(size, type = 'coherent') {
+    if (type === 'random') {
+        return createRandomMaskGrid(size);
+    } else { // Default to coherent
+        return createCoherentMaskGrid(size);
+    }
 }
 
 // Load and process image
@@ -134,8 +204,8 @@ function createEncryptedGrid(originalGrid, maskGrid, solutionOffset) {
             if (maskX >= 0 && maskX < MASK_SIZE && maskY >= 0 && maskY < MASK_SIZE) {
                 encrypted[y][x] = combineColors(originalGrid[y][x], maskGrid[maskY][maskX]);
             } else {
-                console.warn(`Mask coordinates out of bounds during initial encryption: (${maskX}, ${maskY})`);
-                encrypted[y][x] = originalGrid[y][x];
+                console.warn(`Mask coordinates out of bounds during initial encryption: (${maskX}, ${maskY}) for image pixel (${x}, ${y})`);
+                encrypted[y][x] = originalGrid[y][x]; // Should not happen with valid offset
             }
         }
     }
@@ -172,15 +242,17 @@ let encryptedGrid = null; // Stored but not directly displayed initially
 let maskGrid = null;
 let displayCanvas = null; // The single canvas for display
 let hintElement = null;
+let maskTypeSelect = null; // Add reference to select element
 let currentMaskPosPixels = { ...INITIAL_MASK_POS }; // Mask's top-left corner in pixels
 
 // --- Initialization ---
 async function init() {
     displayCanvas = document.getElementById('displayCanvas');
     hintElement = document.getElementById('hint');
+    maskTypeSelect = document.getElementById('maskType'); // Get select element
     const resetButton = document.getElementById('resetButton');
 
-    if (!displayCanvas || !hintElement || !resetButton) {
+    if (!displayCanvas || !hintElement || !resetButton || !maskTypeSelect) { // Check select element
         console.error("Initialization failed: Missing required HTML elements.");
         hintElement.textContent = "Fehler: Wichtige Seitenelemente fehlen.";
         return;
@@ -191,22 +263,7 @@ async function init() {
         originalImageGrid = await loadImage('cat.png');
         console.log('Image loaded.');
 
-        console.log('Creating mask grid...');
-        maskGrid = createMaskGrid(MASK_SIZE);
-        console.log('Mask grid created.');
-
-        console.log('Creating encrypted grid (in memory)...');
-        encryptedGrid = createEncryptedGrid(originalImageGrid, maskGrid, SOLUTION_OFFSET);
-        console.log('Encrypted grid created.');
-
-        // Set initial canvas size
-        displayCanvas.width = INITIAL_MASK_POS.x + MASK_SIZE * PIXEL_SIZE + PADDING;
-        displayCanvas.height = PADDING + Math.max(IMAGE_SIZE, MASK_SIZE) * PIXEL_SIZE + PADDING;
-
-        console.log('Drawing initial state...');
-        currentMaskPosPixels = { ...INITIAL_MASK_POS }; // Reset position
-        redrawDisplayCanvas(currentMaskPosPixels);
-        console.log('Initial state drawn.');
+        await regenerateGridsAndRedraw(); // Call new function for initial setup
 
         setupEventListeners();
         hintElement.textContent = generateHint(currentMaskPosPixels); // Initial hint
@@ -221,6 +278,32 @@ async function init() {
             hintElement.textContent = "Fehler bei der Initialisierung. Überprüfe die Konsole (F12) für Details.";
         }
     }
+}
+
+// --- Grid Regeneration and Redrawing --- 
+async function regenerateGridsAndRedraw() {
+    const selectedMaskType = maskTypeSelect.value;
+    console.log(`Regenerating grids with type: ${selectedMaskType}`);
+
+    console.log('Creating mask grid...');
+    maskGrid = createMaskGrid(MASK_SIZE, selectedMaskType);
+    console.log('Mask grid created.');
+
+    console.log('Creating encrypted grid (in memory)...');
+    encryptedGrid = createEncryptedGrid(originalImageGrid, maskGrid, SOLUTION_OFFSET);
+    console.log('Encrypted grid created.');
+
+    // Reset mask position to initial
+    currentMaskPosPixels = { ...INITIAL_MASK_POS }; 
+
+    // Adjust canvas size (in case dimensions changed, though they don't here)
+    displayCanvas.width = INITIAL_MASK_POS.x + MASK_SIZE * PIXEL_SIZE + PADDING;
+    displayCanvas.height = PADDING + Math.max(IMAGE_SIZE, MASK_SIZE) * PIXEL_SIZE + PADDING;
+
+    console.log('Drawing initial state...');
+    redrawDisplayCanvas(currentMaskPosPixels);
+    console.log('Initial state drawn.');
+    hintElement.textContent = generateHint(currentMaskPosPixels); // Update hint
 }
 
 // --- Drawing Logic ---
@@ -376,11 +459,15 @@ function setupEventListeners() {
         }
     });
 
+    // Add listener for mask type change
+    maskTypeSelect.addEventListener('change', () => {
+        regenerateGridsAndRedraw(); // Regenerate and redraw everything
+    });
+
     const resetButton = document.getElementById('resetButton');
     resetButton.addEventListener('click', () => {
-        currentMaskPosPixels = { ...INITIAL_MASK_POS }; // Reset position
-        redrawDisplayCanvas(currentMaskPosPixels);    // Redraw initial state
-        hintElement.textContent = generateHint(currentMaskPosPixels); // Reset hint
+        // Reset now regenerates based on current selection
+        regenerateGridsAndRedraw(); 
     });
 }
 
